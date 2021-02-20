@@ -37,25 +37,25 @@ Resources:
             TableName: ZipCode
       Timeout: 600
       MemorySize: 512
-      Events:
-        ScheduleImport:
-          Type: Schedule
-          Properties:
-            Schedule: cron(10 15 31 3 ? *)
-  TableScaleUpFunc:
-    Type: AWS::Serverless::Function
-    Properties:
-      CodeUri: src/
-      Handler: import.write_capacity_scaleup
-      Runtime: python3.8
-      Policies:
-        - DynamoDBReconfigurePolicy:
-            TableName: ZipCode
-      Events:
-        ScheduleImport:
-          Type: Schedule
-          Properties:
-            Schedule: cron(0 15 31 3 ? *)
+  #     Events:
+  #       ScheduleImport:
+  #         Type: Schedule
+  #         Properties:
+  #           Schedule: cron(10 15 31 3 ? *)
+  # TableScaleUpFunc:
+  #   Type: AWS::Serverless::Function
+  #   Properties:
+  #     CodeUri: src/
+  #     Handler: import.write_capacity_scaleup
+  #     Runtime: python3.8
+  #     Policies:
+  #       - DynamoDBReconfigurePolicy:
+  #           TableName: ZipCode
+  #     Events:
+  #       ScheduleImport:
+  #         Type: Schedule
+  #         Properties:
+  #           Schedule: cron(0 15 31 3 ? *)
   ZipCodeSearchApi:
     Type: AWS::Serverless::Function
     Properties:
