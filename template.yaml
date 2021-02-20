@@ -1,0 +1,78 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  zip-code-app
+
+  Sample SAM Template for zip-code-app
+
+# More info about Globals: https://github.com/awslabs/serverless-application-model/blob/master/docs/globals.rst
+Globals:
+  Function:
+    Timeout: 3
+
+Resources:
+  ZipCodeTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: ZipCode
+      AttributeDefinitions:
+        - AttributeName: zipCode
+          AttributeType: S
+      ProvisionedThroughput:
+        ReadCapacityUnits: 5
+        WriteCapacityUnits: 1
+      KeySchema:
+        - AttributeName: zipCode
+          KeyType: HASH
+  ImportZipCodeFunc:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: src/
+      Handler: import.main
+      Runtime: python3.8
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: ZipCode
+        - DynamoDBReconfigurePolicy:
+            TableName: ZipCode
+      Timeout: 600
+      MemorySize: 512
+      Events:
+        ScheduleImport:
+          Type: Schedule
+          Properties:
+            Schedule: cron(10 15 31 3 ? *)
+  TableScaleUpFunc:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: src/
+      Handler: import.write_capacity_scaleup
+      Runtime: python3.8
+      Policies:
+        - DynamoDBReconfigurePolicy:
+            TableName: ZipCode
+      Events:
+        ScheduleImport:
+          Type: Schedule
+          Properties:
+            Schedule: cron(0 15 31 3 ? *)
+  ZipCodeSearchApi:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: src/
+      Handler: search.main
+      Runtime: python3.8
+      Policies:
+        - DynamoDBReadPolicy:
+            TableName: ZipCode
+      Events:
+        ListSearchUser:
+          Type: Api
+          Properties:
+            Path: /zipcode/{zipCode}
+            Method: get
+
+Outputs:
+  ZipCodeSearchApi:
+    Description: "API Gateway endpoint URL for Search Address from Zip Code"
+    Value: !Sub "https://${ServerlessRestApi}.execute-api.${AWS::Region}.amazonaws.com/Prod/zipcode/100-0000"
