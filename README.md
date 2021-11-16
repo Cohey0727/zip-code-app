@@ -1,123 +1,548 @@
-# zip-code-app
+# SAMをつかったサーバーレスな郵便番号APIを紹介！
+## はじめに
+郵便番号から住所を検索するAPIってなんで無料で存在しないんだってよく思います。(ほんとにないかはよく調べてないので知りませんが。)
+なので簡単にデプロイして公開して自動更新までしてくれるアプリケーションをSAMをつかって作成したので紹介します。
+またSAMのチュートリアルに丁度いいくらいの量だと思いますので、ぜひ[実装解説](#実装解説)も見てみてください。
+この記事で紹介しているソースコードはこちらです。
+https://github.com/Cohey0727/zip-code-app
 
-This project contains source code and supporting files for a serverless application that you can deploy with the SAM CLI. It includes the following files and folders.
+### 構成について
+日本郵便株式会社は郵便番号と住所を紐づけたCSVファイルを公開しています。https://www.post.japanpost.jp/zipcode/download.html
+ですがCSVファイルのままだとWeb画面などで利用するのは難しいです。
+そこでLambdaでファイルをダウンロードして検索可能な状態でDynamoDBに格納する関数とそれをAPIとして公開する関数、定期的にそれらを更新するイベントをSAMで作成しています。
+![Untitled Diagram.png](https://qiita-image-store.s3.ap-northeast-1.amazonaws.com/0/235240/51711bce-71d3-3745-197b-e8c754c5da03.png)
 
-- hello_world - Code for the application's Lambda function.
-- events - Invocation events that you can use to invoke the function.
-- tests - Unit tests for the application code. 
-- template.yaml - A template that defines the application's AWS resources.
 
-The application uses several AWS resources, including Lambda functions and an API Gateway API. These resources are defined in the `template.yaml` file in this project. You can update the template to add AWS resources through the same deployment process that updates your application code.
+### SAMとは
+SAMとはAWSのマネージドなサービスを組み合わせて、サーバーレスアプリケーションを構築できるフレームワークです。
+cliが提供されており、この記事の実装やデプロイの際にインストールが必要になります。
+[AWS SAM CLI のインストール
+](https://docs.aws.amazon.com/ja_jp/serverless-application-model/latest/developerguide/serverless-sam-cli-install.html)
 
-If you prefer to use an integrated development environment (IDE) to build and test your application, you can use the AWS Toolkit.  
-The AWS Toolkit is an open source plug-in for popular IDEs that uses the SAM CLI to build and deploy serverless applications on AWS. The AWS Toolkit also adds a simplified step-through debugging experience for Lambda function code. See the following links to get started.
+### 環境
 
-* [PyCharm](https://docs.aws.amazon.com/toolkit-for-jetbrains/latest/userguide/welcome.html)
-* [IntelliJ](https://docs.aws.amazon.com/toolkit-for-jetbrains/latest/userguide/welcome.html)
-* [VS Code](https://docs.aws.amazon.com/toolkit-for-vscode/latest/userguide/welcome.html)
-* [Visual Studio](https://docs.aws.amazon.com/toolkit-for-visual-studio/latest/user-guide/welcome.html)
+| 項目    | バージョン |
+| ------- | ---------- |
+| SAM CLI | 1.6.2      |
+| Python  | 3.8        |
 
-## Deploy the sample application
 
-The Serverless Application Model Command Line Interface (SAM CLI) is an extension of the AWS CLI that adds functionality for building and testing Lambda applications. It uses Docker to run your functions in an Amazon Linux environment that matches Lambda. It can also emulate your application's build environment and API.
+### とにかく動作させたい方へ
+実装等はどうでもいいので、とにかく動作させたいという方は、`git clone https://github.com/Cohey0727/zip-code-app.git`をして[デプロイ&動作確認](#デプロイ動作確認)の章から読んでください。
+また`master`ブランチでは定期的に郵便番号を更新するプログラムを含みます。不要な場合はブランチを`none_schedule`に切り替えてからデプロイ&動作確認を実施してください。
 
-To use the SAM CLI, you need the following tools.
 
-* SAM CLI - [Install the SAM CLI](https://docs.aws.amazon.com/serverless-application-model/latest/developerguide/serverless-sam-cli-install.html)
-* [Python 3 installed](https://www.python.org/downloads/)
-* Docker - [Install Docker community edition](https://hub.docker.com/search/?type=edition&offering=community)
+## 実装解説
+ここでは具体的なプログラムや構成の解説をしていきます。
+逐次[デプロイ&動作確認](#デプロイ&動作確認)しながらやるとより理解が深まると思います。
 
-To build and deploy your application for the first time, run the following in your shell:
+### 初期化
+`sam init`コマンドで初期化します。
+以下のパラメータで初期化しています。
 
-```bash
-sam build --use-container
-sam deploy --guided
+| 項目                  | 選択                      | 値           |
+| --------------------- | ------------------------- | ------------ |
+| template source       | AWS Quick Start Templates | 1            |
+| runtime               | python3.8                 | 2            |
+| Project name          | -                         | zip-code-app |
+| application templates | Hello World Example       | 1            |
+
+
+<details>
+<summary>クリックでコマンド結果を展開</summary>
+<div>
+
+```shell
+$ sam init
+Which template source would you like to use?
+        1 - AWS Quick Start Templates
+        2 - Custom Template Location
+Choice: 1
+
+Which runtime would you like to use?
+        1 - nodejs12.x
+        2 - python3.8
+        3 - ruby2.7
+        4 - go1.x
+        5 - java11
+        6 - dotnetcore3.1
+        7 - nodejs10.x
+        8 - python3.7
+        9 - python3.6
+        10 - python2.7
+        11 - ruby2.5
+        12 - java8.al2
+        13 - java8
+        14 - dotnetcore2.1
+Runtime: 2
+
+Project name [sam-app]: zip-code-app
+
+AWS quick start application templates:
+        1 - Hello World Example
+        2 - EventBridge Hello World
+        3 - EventBridge App from scratch (100+ Event Schemas)
+        4 - Step Functions Sample App (Stock Trader)
+        5 - Elastic File System Sample App
+Template selection: 1
+
+-----------------------
+Generating application:
+-----------------------
+Name: zip-code-app
+Runtime: python3.8
+Dependency Manager: pip
+Application Template: hello-world
+Output Directory: .
+
+Next steps can be found in the README file at ./zip-code-app/README.md
+
 ```
 
-The first command will build the source of your application. The second command will package and deploy your application to AWS, with a series of prompts:
+</div>
+</details>
 
-* **Stack Name**: The name of the stack to deploy to CloudFormation. This should be unique to your account and region, and a good starting point would be something matching your project name.
-* **AWS Region**: The AWS region you want to deploy your app to.
-* **Confirm changes before deploy**: If set to yes, any change sets will be shown to you before execution for manual review. If set to no, the AWS SAM CLI will automatically deploy application changes.
-* **Allow SAM CLI IAM role creation**: Many AWS SAM templates, including this example, create AWS IAM roles required for the AWS Lambda function(s) included to access AWS services. By default, these are scoped down to minimum required permissions. To deploy an AWS CloudFormation stack which creates or modified IAM roles, the `CAPABILITY_IAM` value for `capabilities` must be provided. If permission isn't provided through this prompt, to deploy this example you must explicitly pass `--capabilities CAPABILITY_IAM` to the `sam deploy` command.
-* **Save arguments to samconfig.toml**: If set to yes, your choices will be saved to a configuration file inside the project, so that in the future you can just re-run `sam deploy` without parameters to deploy changes to your application.
+今回は`src`フォルダを作成しそこにプログラムを書くことにします。
+また`src/requirements.txt`に必要なライブラリを追記します。
 
-You can find your API Gateway Endpoint URL in the output values displayed after deployment.
-
-## Use the SAM CLI to build and test locally
-
-Build your application with the `sam build --use-container` command.
-
-```bash
-zip-code-app$ sam build --use-container
+```shell
+$ mkdir src
+$ touch src/__init__.py
+$ touch src/requirements.txt
+$ echo "requests" >> src/requirements.txt
 ```
 
-The SAM CLI installs dependencies defined in `hello_world/requirements.txt`, creates a deployment package, and saves it in the `.aws-sam/build` folder.
+また不要なファイルと不要なリソースを削除します。
 
-Test a single function by invoking it directly with a test event. An event is a JSON document that represents the input that the function receives from the event source. Test events are included in the `events` folder in this project.
-
-Run functions locally and invoke them with the `sam local invoke` command.
-
-```bash
-zip-code-app$ sam local invoke HelloWorldFunction --event events/event.json
+```shell
+$ rm -rf hello_world
 ```
 
-The SAM CLI can also emulate your application's API. Use the `sam local start-api` to run the API locally on port 3000.
+AWSで利用するリソースは`template.yaml`に記述していきます。
+不要な部分を削除しておきます。
 
-```bash
-zip-code-app$ sam local start-api
-zip-code-app$ curl http://localhost:3000/
+```diff
+--- a/template.yaml
++++ b/template.yaml
+
+ Resources:
+-  HelloWorldFunction:
+-    Type: AWS::Serverless::Function ## More info about Function Resource: https://github.com/awslabs/serverless-application-model/blob/master/versions/2016-10-31.md#awsserverlessfunction
+-    Properties:
+-      CodeUri: hello_world/
+-      Handler: app.lambda_handler
+-      Runtime: python3.8
+-      Events:
+-        HelloWorld:
+-          Type: Api ## More info about API Event Source: https://github.com/awslabs/serverless-application-model/blob/master/versions/2016-10-31.md#api
+-          Properties:
+-            Path: /hello
+-            Method: get
+ 
 ```
 
-The SAM CLI reads the application template to determine the API's routes and the functions that they invoke. The `Events` property on each function's definition includes the route and method for each path.
+
+最終的なフォルダ構成は以下のようになります。
+
+```
+.
+├── README.md
+├── __init__.py
+├── events
+│   └── event.json
+├── src
+│   ├── __init__.py
+│   └── requirements.txt
+├── template.yaml
+└── tests
+    ├── __init__.py
+    ├── integration
+    │   ├── __init__.py
+    │   └── test_api_gateway.py
+    ├── requirements.txt
+    └── unit
+        ├── __init__.py
+        └── test_handler.py
+```
+
+### DBの設計・実装
+AWSのDynamoDBを利用して作成します。
+**郵便番号 -> 住所**で検索したいので郵便番号に該当するカラムに`PrimaryIndex`を指定します。
+今回は郵便番号のカラムを`zipCode`としました。
+また、WriteCapacityUnitsは初回のデータ取り込み時を除いて全く必要ないので最小の1ユニットを指定します。
+
+以下のコードを`template.yaml`の`Resources`のブロックに追記します。
+
+```template.yaml
+  ZipCodeTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: ZipCode
+      AttributeDefinitions:
+        - AttributeName: zipCode
+          AttributeType: S
+      ProvisionedThroughput:
+        ReadCapacityUnits: 5
+        WriteCapacityUnits: 1
+      KeySchema:
+        - AttributeName: zipCode
+          KeyType: HASH
+```
+
+DynamoDBはスキーマレスなので、インデックスに指定しないカラムは記述しません。なのでこれでDBに関する記述は終了です。[デプロイ](#デプロイ)するとコンソール画面からテーブルが作成されていることが確認できます。
+
+### 郵便番号の取り込みを実装
+郵便番号の取り込み用のソースコードのは`import.py`ファイルに記述していきます。
+
+```shell
+$ touch src/import.py
+```
+#### 定数と初期化
+先に作業用ディレクトリ、ダウンロードファイル名、解凍ファイル名、ダウンロードURLを定数にしておきます。
+また、boto3よりテーブルリソースを取得しておきます。
+
+```python
+import boto3
+import csv
+import os
+import requests
+import zipfile
+
+WORKSPACE = f'/tmp'
+ZIP_FILE_NAME = 'ken_all.zip'
+CSV_FILE_NAME = 'KEN_ALL.CSV'
+ZIP_CODE_URL = 'https://www.post.japanpost.jp/zipcode/dl/kogaki/zip/ken_all.zip'
+
+table_name = 'ZipCode'
+zip_code_table = boto3.resource('dynamodb').Table(table_name)
+```
+  
+#### ファイルのダウンロードと解凍
+ファイルをダウンロード、解凍します。
+
+```python
+## ファイルダウンロード
+res = requests.get(ZIP_CODE_URL, stream=True)
+
+## ファイル保存
+with open(f'{WORKSPACE}/{ZIP_FILE_NAME}', 'wb') as f:
+    for chunk in res.iter_content(chunk_size=1024):
+        if chunk:
+            f.write(chunk)
+            f.flush()
+
+## ファイル解凍
+with zipfile.ZipFile(f'{WORKSPACE}/{ZIP_FILE_NAME}', 'r') as zip_file:
+    zip_file.extractall(WORKSPACE)
+
+```
+
+#### データの整形と取り込み
+  
+日本郵政からダウンロードしたCSVファイルは以下のような構成になっています。
+[参考](https://www.post.japanpost.jp/zipcode/dl/readme.html)
+
+| No  | 内容                   |
+| --- | ---------------------- |
+| 1   | 全国地方公共団体コード |
+| 2   | 旧郵便番号(5桁)        |
+| 3   | 郵便番号(7桁)          |
+| 4   | 都道府県名カナ         |
+| 5   | 市区町村名カナ         |
+| 6   | 町域名カナ             |
+| 7   | 都道府県名             |
+| 8   | 市区町村名             |
+| 9   | 町域名                 |
+
+3カラム目の`郵便番号(7桁)`が`PrimaryIndex`である`zipCode`を当てはまります。
+それ以外にはそれっぽい英語のカラムを適用します。
+
+
+```python
+## 整形
+zip_codes = []
+with open(f'{WORKSPACE}/{CSV_FILE_NAME}', "r", encoding="ms932", errors="", newline="") as csv_file:
+    reader = csv.reader(csv_file)
+    for row in reader:
+        zip_codes.append(dict(
+            zipCode=row[2],
+            prefecture=row[6],
+            prefectureKana=row[3],
+            city=row[7],
+            cityKana=row[4],
+            street=row[8],
+            streetKana=row[5]
+        ))
+
+## 取り込み
+with zip_code_table.batch_writer(overwrite_by_pkeys=['zipCode']) as batch:
+    for zip_code in zip_codes:
+        batch.put_item(Item=zip_code)
+```
+
+#### 定期取り込みの登録
+初回取り込みのみで問題ないという場合は、この章は呼び飛ばしてください。
+
+このアプリケーションの場合、書き込みキャパシティーがデータ取り込み時とそうでないときで大きな差があるためそれを管理する必要があります。
+処理の流れとしては**キャパシティーを拡張→10分待つ→実行→キャパシティーを元に戻す**と処理が少し複雑になります。(キャパシティーモードをオンデマンドにすれば解決しますが、無料枠でどうにかしたかったのでこの方法を採用しています)
+
+まず、書き込みキャパシティを拡張する関数とそれを元に戻す関数を`import.py`に追記します。
+
+```python
+## import.py
+def write_capacity_scaleup(*args, **kwargs):
+    zip_code_table.update(
+        ProvisionedThroughput={
+            'ReadCapacityUnits': 5,
+            'WriteCapacityUnits': 1000
+        }
+    )
+
+
+def write_capacity_scaledown(*args, **kwargs):
+    zip_code_table.update(
+        ProvisionedThroughput={
+            'ReadCapacityUnits': 5,
+            'WriteCapacityUnits': 1
+        }
+    )
+
+```
+
+続いて関数が定期実行されるように`template.yaml`に追記しきます。`write_capacity_scaledown`は取り込み処理の最後に追記します。
+今回は**毎年、日本時間の4月10日のAM00:00分にスケールアップ→4月1日のAM00:10に取り込み処理開始&スケールダウン**するようにしています。
+
+以下のコードを`template.yaml`の`Resources`のブロックに追記します。
 
 ```yaml
+  ImportZipCodeFunc:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: src/
+      Handler: import.main
+      Runtime: python3.8
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: ZipCode
+        - DynamoDBReconfigurePolicy:
+            TableName: ZipCode
+      Timeout: 600
+      MemorySize: 512
       Events:
-        HelloWorld:
+        ScheduleImport:
+          Type: Schedule
+          Properties:
+            Schedule: cron(10 15 31 3 ? *)
+  TableScaleUpFunc:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: src/
+      Handler: import.write_capacity_scaleup
+      Runtime: python3.8
+      Policies:
+        - DynamoDBReconfigurePolicy:
+            TableName: ZipCode
+      Events:
+        ScheduleImport:
+          Type: Schedule
+          Properties:
+            Schedule: cron(0 15 31 3 ? *)
+
+```
+#### 完成形
+以下がデータ取り込みの最終的なソースコードとなります。
+
+```python
+import boto3
+import csv
+import os
+import requests
+import zipfile
+
+
+WORKSPACE = '/tmp'
+ZIP_FILE_NAME = 'ken_all.zip'
+CSV_FILE_NAME = 'KEN_ALL.CSV'
+ZIP_CODE_URL = 'https://www.post.japanpost.jp/zipcode/dl/kogaki/zip/ken_all.zip'
+
+table_name = 'ZipCode'
+zip_code_table = boto3.resource('dynamodb').Table(table_name)
+
+
+def main(*args, **kwargs):
+    try:
+        ## ファイルダウンロード
+        print('ファイルダウンロード開始')
+        res = requests.get(ZIP_CODE_URL, stream=True)
+
+        ## ファイル保存
+        print('ファイル保存開始')
+        with open(f'{WORKSPACE}/{ZIP_FILE_NAME}', 'wb') as f:
+            for chunk in res.iter_content(chunk_size=1024):
+                if chunk:
+                    f.write(chunk)
+                    f.flush()
+
+        ## ファイル解凍
+        print('ファイル解凍開始')
+        with zipfile.ZipFile(f'{WORKSPACE}/{ZIP_FILE_NAME}', 'r') as zip_file:
+            zip_file.extractall(WORKSPACE)
+
+        ## データ整形
+        print('データ整形開始')
+        zip_codes = []
+        with open(f'{WORKSPACE}/{CSV_FILE_NAME}', "r", encoding="ms932", errors="", newline="") as csv_file:
+            reader = csv.reader(csv_file)
+            for row in reader:
+                zip_codes.append(dict(
+                    zipCode=row[2],
+                    prefecture=row[6],
+                    prefectureKana=row[3],
+                    city=row[7],
+                    cityKana=row[4],
+                    street=row[8],
+                    streetKana=row[5]
+                ))
+
+        ## 取り込み
+        print('取り込み開始')
+        with zip_code_table.batch_writer(overwrite_by_pkeys=['zipCode']) as batch:
+            for zip_code in zip_codes:
+                batch.put_item(Item=zip_code)
+    finally:
+        write_capacity_scaledown()
+        os.remove(f'{WORKSPACE}/{ZIP_FILE_NAME}')
+        os.remove(f'{WORKSPACE}/{CSV_FILE_NAME}')
+
+
+def write_capacity_scaleup(*args, **kwargs):
+    zip_code_table.update(
+        ProvisionedThroughput={
+            'ReadCapacityUnits': 5,
+            'WriteCapacityUnits': 1000
+        }
+    )
+
+
+def write_capacity_scaledown(*args, **kwargs):
+    zip_code_table.update(
+        ProvisionedThroughput={
+            'ReadCapacityUnits': 5,
+            'WriteCapacityUnits': 1
+        }
+    )
+
+```
+
+### 検索用APIの実装
+#### 検索用プログラム
+検索用のソースコードは`search.py`ファイルに記述していきます。
+
+```shell
+$ touch src/search.py
+```
+
+今回は`https://xxx.amazonaws.com/zipcode/123-4567`のようにパスパラメータとして郵便番号を受け取ることにします。
+
+```python
+import boto3
+import json
+
+table_name = 'ZipCode'
+zip_code_table = boto3.resource('dynamodb').Table(table_name)
+
+
+def main(event, context):
+    zip_code_str = event['pathParameters'].get('zipCode').replace('-', '')
+    params = {'zipCode': zip_code_str}
+    zip_code = zip_code_table.get_item(Key=params).get('Item')
+    return {'statusCode': 200, 'body': json.dumps(zip_code)} if zip_code else {'statusCode': 404}
+
+```
+
+パスパラメータはLambdaをハンドルしている関数の第一引数から`pathParameters`キーで取得できます。
+またパスパラメータ内でのキーは`template.yaml`で宣言することができ、今回は`zipCode`としています。
+
+`template.yaml`の`Resource`ブロックに以下を追記します。
+
+```yaml
+  ZipCodeSearchApi:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: src/
+      Handler: search.main
+      Runtime: python3.8
+      Policies:
+        - DynamoDBReadPolicy:
+            TableName: ZipCode
+      Events:
+        ListSearchUser:
           Type: Api
           Properties:
-            Path: /hello
+            Path: /zipcode/{zipCode}
             Method: get
 ```
 
-## Add a resource to your application
-The application template uses AWS Serverless Application Model (AWS SAM) to define application resources. AWS SAM is an extension of AWS CloudFormation with a simpler syntax for configuring common serverless application resources such as functions, triggers, and APIs. For resources not included in [the SAM specification](https://github.com/awslabs/serverless-application-model/blob/master/versions/2016-10-31.md), you can use standard [AWS CloudFormation](https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-template-resource-type-ref.html) resource types.
+#### デプロイ後にAPIのURLを表示
 
-## Fetch, tail, and filter Lambda function logs
+`template.yaml`の`Outputs`のブロックには、デプロイが完了したあとにAPIのURLを出力することができます。
 
-To simplify troubleshooting, SAM CLI has a command called `sam logs`. `sam logs` lets you fetch logs generated by your deployed Lambda function from the command line. In addition to printing the logs on the terminal, this command has several nifty features to help you quickly find the bug.
-
-`NOTE`: This command works for all AWS Lambda functions; not just the ones you deploy using SAM.
-
-```bash
-zip-code-app$ sam logs -n HelloWorldFunction --stack-name zip-code-app --tail
+```yaml
+Outputs:
+  ZipCodeSearchApi:
+    Description: "API Gateway endpoint URL for Search Address from Zip Code"
+    Value: !Sub "https://${ServerlessRestApi}.execute-api.${AWS::Region}.amazonaws.com/Prod/zipcode/100-0000"
 ```
 
-You can find more information and examples about filtering Lambda function logs in the [SAM CLI Documentation](https://docs.aws.amazon.com/serverless-application-model/latest/developerguide/serverless-sam-cli-logging.html).
+## デプロイ&動作確認
+### デプロイ
+以下のコマンドでアプリケーションをデプロイします。
+スタック名やリージョンは、必要に応じて変更してください。
 
-## Tests
-
-Tests are defined in the `tests` folder in this project. Use PIP to install the test dependencies and run tests.
-
-```bash
-zip-code-app$ pip install -r tests/requirements.txt --user
-# unit test
-zip-code-app$ python -m pytest tests/unit -v
-# integration test, requiring deploying the stack first.
-# Create the env variable AWS_SAM_STACK_NAME with the name of the stack we are testing
-zip-code-app$ AWS_SAM_STACK_NAME=<stack-name> python -m pytest tests/integration -v
+```shell
+$ sam build
+$ sam deploy --guided
+        Stack Name [sam-app]: zip-code-app
+        AWS Region [us-east-1]: ap-northeast-1
+        #Shows you resources changes to be deployed and require a 'Y' to initiate deploy
+        Confirm changes before deploy [y/N]: y
+        #SAM needs permission to be able to create roles to connect to the resources in your template
+        Allow SAM CLI IAM role creation [Y/n]: Y
+        HelloWorldFunction may not have authorization defined, Is this okay? [y/N]: y
+        Save arguments to configuration file [Y/n]: Y
+        SAM configuration file [samconfig.toml]:
+        SAM configuration environment [default]:
 ```
 
-## Cleanup
+デプロイ後に出力されるURLがAPIのURLです。動作確認で利用するのでメモしておきます。
+なおこちらAWSコンソールからいつでも確認できます。API Gateway > zip-code-app > ステージ > Prod
 
-To delete the sample application that you created, use the AWS CLI. Assuming you used your project name for the stack name, you can run the following:
+### 初回取り込み
+上記のデプロイのみだと定期実行の日付までデータが存在しないので住所検索を利用することができません。
+そのため初回のデータ取り込みが必要になります。
 
-```bash
-aws cloudformation delete-stack --stack-name zip-code-app
-```
+実行する前に書き込みキャパシティーユニットを拡張する必要があります。
+私の実行したときは、500ユニットほどで頭打ちになったので1000ユニットあれば十分です。
+AWSコンソールの**DynamoDB > テーブル > ZipCode > キャパシティ > 書き込みキャパシティーユニット**から変更できます。
 
-## Resources
+![Group 1.png](https://qiita-image-store.s3.ap-northeast-1.amazonaws.com/0/235240/4afa2b6f-56c0-6ac0-a7de-7245c1cf67ae.png)
 
-See the [AWS SAM developer guide](https://docs.aws.amazon.com/serverless-application-model/latest/developerguide/what-is-sam.html) for an introduction to SAM specification, the SAM CLI, and serverless application concepts.
+変更の反映には数分かかります。テーブルの更新が完了するまで待ってLambdaのダッシュボード画面から取り込み関数を実行します。
+**Lambda > 関数 > zip-code-app-ImportZipCodeFunc-xxxx > 設定**から実行できます。
+テストイベントを作成する必要がありますが、中身は参照しないのでサンプルをそのまま利用して問題ありません。
 
-Next, you can use AWS Serverless Application Repository to deploy ready to use Apps that go beyond hello world samples and learn how authors developed their applications: [AWS Serverless Application Repository main page](https://aws.amazon.com/serverless/serverlessrepo/)
+![Group 2.png](https://qiita-image-store.s3.ap-northeast-1.amazonaws.com/0/235240/623a8ddf-9098-6cfd-106d-81b3c267e0ed.png)
+
+郵便番号は全部で約12万件あるので数分かかります。
+完了したら、データが作成されていることと書き込みキャパシティーユニットが1に戻っていることを確認します。
+![image.png](https://qiita-image-store.s3.ap-northeast-1.amazonaws.com/0/235240/344c7723-137a-4722-a1cc-526c337c4627.png)
+
+### 動作確認
+デプロイ後に出力されたURLをブラウザ等に貼り付けて動作を確認します。
+Unicodeエスケープされているのでわかりにくいですが、レスポンスに住所情報が乗っています。(開発者ツールのNetwork > 対象のリクエスト > PreviewでUnicodeエスケープをデコードしてくれます。)
+![image.png](https://qiita-image-store.s3.ap-northeast-1.amazonaws.com/0/235240/c2e0129d-be56-59e7-ca1c-14ae8cb216a5.png)
+
+
+## さいごに
+住所検索を利用・実装する際の選択肢のひとつになればと思います。
+あとSAMやCloudFormationなど**Infrastructure as Code**フレームワークはこうしたアプリケーションの公開も簡単でとてもいいですね。
